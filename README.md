@@ -4,4 +4,4 @@ A simple script to directly download sentences from a TextGrid zip-file link and
 python create_dataset.py --help
 ```
 
-Note that doanloading a large qunatity of documents can take several hours.
+Note that doanloading a large qunatity of documents can take several hours. We have: Successfully read 35711 sentences from 50 files

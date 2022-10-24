@@ -4,11 +4,25 @@ from tqdm.auto import tqdm
 import spacy
 import argparse
 from random import shuffle, randint
+import matplotlib.pyplot as plt
+from statistics import median, mean
+import numpy as np
 
-def file_to_sentence_list(nlp,zip_file_object,mask_percentage,shuffle_sentences=True):
-    print('start reading the zip-file')
+def file_to_sentence_list(nlp,zip_file_object,mask_percentage,no_docs,shuffle_sentences=True):
+    
     sentence_tuples =[]
-    for file_name in tqdm(zip_file_object.namelist()):
+    name_list = zip_file_object.namelist()
+    shuffle(name_list)
+    if name_list is None:
+        no_docs = 'all'
+    elif(len(name_list)) > no_docs+1:
+        name_list=name_list[:no_docs]
+    else:
+        no_docs = 'all'
+       
+    print('start reading',no_docs,' docs from the zip-file')
+    doc_count = 0
+    for file_name in tqdm(name_list):
         # only consider text-files
         if '.txt' in file_name:
             with zip_file_object.open(file_name) as current_file:
@@ -22,10 +36,11 @@ def file_to_sentence_list(nlp,zip_file_object,mask_percentage,shuffle_sentences=
                             sentence_clean = str(sentence).replace('\n','').replace('«','"').replace('»','"')
                             sentence_tuples.append( (mask_sentence(sentence_clean, mask_percentage) ,
                                                sentence_clean) )
-    print('Successfully read',len(sentence_tuples),'sentences from', len(zip_file_object.namelist()), 'files')
+            doc_count += 1
+    print('Successfully read',len(sentence_tuples),'sentences from', len(name_list), 'files')
     if shuffle_sentences:
         shuffle(sentence_tuples)
-    return sentence_tuples
+    return sentence_tuples, doc_count
 
         
 def mask_sentence(sentence:str, mask_percentage):
@@ -135,6 +150,18 @@ def main():
         default=10,
         help='Percentage of sentence, that will be in the test dataset.'
     )
+    parser.add_argument(
+        '--no_docs',
+        type=int,
+        default=50,
+        help='Maximum Number of documents from the url should be randomly sampled for the dataset. Leave blank to sample all.'
+    )
+    parser.add_argument(
+        '--print_statisitics',
+        type=bool,
+        default=True,
+        help='Should the statistics be printed?'
+    )
     
     args = parser.parse_args()
     
@@ -149,21 +176,47 @@ def main():
     
     
     # setup spacy
-    spacy.cli.download(spacy_model_name)
-    nlp = spacy.load(spacy_model_name)
+    try:
+        nlp = spacy.load(spacy_model_name)
+    except OSError:
+        spacy.cli.download(spacy_model_name)
+        nlp = spacy.load(spacy_model_name)
     url = args.input_url
     
     # Some other options for the url to consider:
     ## url = 'https://textgridlab.org/1.0/aggregator/zip/query?query=*&filter=edition.agent.value%3AKafka%2C+Franz&filter=format%3Atext%2Fxml&filter=work.genre%3Aprose&transform=text&meta=false&only=text/xml&dirnames='
+    ## url = 'https://textgridlab.org/1.0/aggregator/zip/query?query=*&filter=edition.agent.value%3AWilde%2C+Oscar&filter=work.genre%3Aprose&transform=text&meta=false&only=text/xml&dirnames='
     ## url = 'https://textgridlab.org/1.0/aggregator/zip/query?query=*&filter=format%3Atext%2Fxml&filter=work.genre%3Aprose&transform=text&meta=false&only=text/xml&dirnames='
     
     
     print('Retrieve the zip-file from\n', url)
     filehandle, _ = urllib.request.urlretrieve(url)
     zip_file_object = zipfile.ZipFile(filehandle, 'r')
-    sentence_tuples = file_to_sentence_list(nlp,zip_file_object,args.mask_percentage, args.shuffle)
+    sentence_tuples, doc_count = file_to_sentence_list(nlp,zip_file_object,args.mask_percentage, args.no_docs, args.shuffle)
     
     write_sentences(args.data_dir, sentence_tuples, tags, args)
+    if args.print_statisitics:
+        words_per_sentence = [len(sentence.split()) for _, sentence in sentence_tuples]
+        maximum = max(words_per_sentence)
+        words_per_sentence_median = median(words_per_sentence)
+        percentile_90 = np.percentile(words_per_sentence, 90)
+        percentile_99 = np.percentile(words_per_sentence, 99)
+        
+        plt.hist(words_per_sentence, bins=list(range(1, maximum, 1)),color='grey',histtype='stepfilled')
+        
+        plt.axvspan(words_per_sentence_median, words_per_sentence_median, color='black')
+        plt.axvspan(percentile_90, percentile_90, color='black')
+        plt.axvspan(percentile_99, percentile_99, color='black')
+        plt.axvspan(maximum, maximum, color='black')
+        
+        #plt.annotate('median'+str(words_per_sentence_median), (words_per_sentence_median,100))
+        plt.text(words_per_sentence_median,100,'median: '+str(int(words_per_sentence_median)),horizontalalignment='right',rotation=90.)
+        plt.text(percentile_90,100,'90%: '+str(int(percentile_90)),horizontalalignment='right',rotation=90.)
+        plt.text(percentile_99,100,'99%: '+str(int(percentile_99)),horizontalalignment='right',rotation=90.)
+        plt.text(maximum,100,'max: '+str(int(maximum)),horizontalalignment='right',rotation=90.)
+        plt.xlabel('Number of Words ('+str(sum(words_per_sentence))+' in total)')
+        plt.ylabel('Number of Sentences \n('+str(len(sentence_tuples))+' in total, from '+str(doc_count)+' document(s))')
+        plt.savefig('output/words_per_sentence.pdf', bbox_inches = 'tight', format='pdf')
     
 
             

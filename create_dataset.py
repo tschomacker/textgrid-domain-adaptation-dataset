@@ -7,10 +7,11 @@ from random import shuffle, randint
 import matplotlib.pyplot as plt
 from statistics import median, mean
 import numpy as np
+import warnings
 
-def file_to_sentence_list(nlp,zip_file_object,mask_percentage,no_docs,shuffle_sentences=True):
+def file_to_sentence_list(nlp,zip_file_object,mask_percentage,no_docs):
     
-    sentence_tuples =[]
+    
     name_list = zip_file_object.namelist()
     shuffle(name_list)
     if name_list is None:
@@ -21,8 +22,11 @@ def file_to_sentence_list(nlp,zip_file_object,mask_percentage,no_docs,shuffle_se
         no_docs = 'all'
        
     print('start reading',no_docs,' docs from the zip-file')
-    doc_count = 0
+    #doc_count = 0
+    documents = []
+    number_of_sentences = 0
     for file_name in tqdm(name_list):
+        sentence_tuples =[]
         # only consider text-files
         if '.txt' in file_name:
             with zip_file_object.open(file_name) as current_file:
@@ -36,11 +40,11 @@ def file_to_sentence_list(nlp,zip_file_object,mask_percentage,no_docs,shuffle_se
                             sentence_clean = str(sentence).replace('\n','').replace('«','"').replace('»','"')
                             sentence_tuples.append( (mask_sentence(sentence_clean, mask_percentage) ,
                                                sentence_clean) )
-            doc_count += 1
-    print('Successfully read',len(sentence_tuples),'sentences from', len(name_list), 'files')
-    if shuffle_sentences:
-        shuffle(sentence_tuples)
-    return sentence_tuples, doc_count
+            number_of_sentences += len(sentence_tuples)
+            documents.append(sentence_tuples)
+    
+    print('Successfully read',number_of_sentences,'sentences from', len(documents), 'documents')
+    return documents
 
         
 def mask_sentence(sentence:str, mask_percentage):
@@ -55,49 +59,61 @@ def mask_sentence(sentence:str, mask_percentage):
 
 
 def write_sentences(data_dir, sentence_tuples, tags, args):
-    train_source_path = data_dir+'/train_source.txt'
-    train_target_path = data_dir+'/train_target.txt'
 
-    val_source_path = data_dir+'/val_source.txt'
-    val_target_path = data_dir+'/val_target.txt'
+    for bucket in tqdm(args.buckets, desc='Writing bucket(s)'):
+        train_source_path = data_dir+'/'+str(bucket)+'_train_source.txt'
+        train_target_path = data_dir+'/'+str(bucket)+'_train_target.txt'
 
-    test_source_path = data_dir+'/test_source.txt'
-    test_target_path = data_dir+'/test_target.txt'
+        val_source_path = data_dir+'/'+str(bucket)+'_val_source.txt'
+        val_target_path = data_dir+'/'+str(bucket)+'_val_target.txt'
 
-    # clear all files
-    for file_name in [train_source_path, train_target_path, 
-                      val_source_path, val_target_path, 
-                      test_source_path, test_target_path]:
-        with open(file_name, "w") as f:
-            f.write('')
-        f.close()
+        test_source_path = data_dir+'/'+str(bucket)+'_test_source.txt'
+        test_target_path = data_dir+'/'+str(bucket)+'_test_target.txt'
+
+        # clear all files
+        for file_name in [train_source_path, train_target_path, 
+                          val_source_path, val_target_path, 
+                          test_source_path, test_target_path]:
+            with open(file_name, "w") as f:
+                f.write('')
+            f.close()
+            
+        if len(sentence_tuples) < bucket:
+            warnings.warn(str(bucket)+' is too large to be used as a bucket size')
         
-    
-    validate_index = int(len(sentence_tuples)/args.validate_percentage)
-    test_index = validate_index+int(len(sentence_tuples)/args.test_percentage)
+        # create the bucket
+        documents_bucket = sentence_tuples[:bucket-1]
+        
+        # extract all sentences to shuffle them
+        sentence_tuples_bucket = [sentence_tuple for document in documents_bucket for sentence_tuple in document]
+        
+        if args.shuffle:
+            shuffle(sentence_tuples_bucket)
+        validate_index = int(len(sentence_tuples_bucket)/args.validate_percentage)
+        test_index = validate_index+int(len(sentence_tuples_bucket)/args.test_percentage)
 
-    for masked_sentence, sentence in sentence_tuples[:validate_index]:
-        with open(val_source_path, "a") as f:
-            f.write(tags[0]+masked_sentence+'\n')
-        f.close()
-        with open(val_target_path, "a") as f:
-            f.write(tags[1]+sentence+'\n')
-        f.close()
-    for masked_sentence, sentence in sentence_tuples[validate_index:test_index]:
-        with open(test_source_path, "a") as f:
-            f.write(tags[0]+masked_sentence+'\n')
-        f.close()
-        with open(test_target_path, "a") as f:
-            f.write(tags[1]+sentence+'\n')
-        f.close()
-    
-    for masked_sentence, sentence in sentence_tuples[test_index:]:
-        with open(train_source_path, "a") as f:
-            f.write(tags[0]+masked_sentence+'\n')
-        f.close()
-        with open(train_target_path, "a") as f:
-            f.write(tags[1]+sentence+'\n')
-        f.close()
+        for masked_sentence, sentence in sentence_tuples_bucket[:validate_index]:
+            with open(val_source_path, "a") as f:
+                f.write(tags[0]+masked_sentence+'\n')
+            f.close()
+            with open(val_target_path, "a") as f:
+                f.write(tags[1]+sentence+'\n')
+            f.close()
+        for masked_sentence, sentence in sentence_tuples_bucket[validate_index:test_index]:
+            with open(test_source_path, "a") as f:
+                f.write(tags[0]+masked_sentence+'\n')
+            f.close()
+            with open(test_target_path, "a") as f:
+                f.write(tags[1]+sentence+'\n')
+            f.close()
+
+        for masked_sentence, sentence in sentence_tuples_bucket[test_index:]:
+            with open(train_source_path, "a") as f:
+                f.write(tags[0]+masked_sentence+'\n')
+            f.close()
+            with open(train_target_path, "a") as f:
+                f.write(tags[1]+sentence+'\n')
+            f.close()
 
 
 def main():
@@ -117,7 +133,7 @@ def main():
     parser.add_argument(
         '--input_url',
         type=str,
-        default='https://textgridlab.org/1.0/aggregator/zip/query?query=*&filter=format%3Atext%2Fxml&filter=work.genre%3Aprose&transform=text&meta=false&only=text/xml&dirnames=',
+        default='https://textgridlab.org/1.0/aggregator/zip/query?query=*&filter=work.genre%3Aprose&transform=text&meta=false&only=text/xml&dirnames=',
         help='Textgrid-URL, where the zip-file can be downloaded.'
     )
     parser.add_argument(
@@ -153,7 +169,7 @@ def main():
     parser.add_argument(
         '--no_docs',
         type=int,
-        default=50,
+        default=150,
         help='Maximum Number of documents from the url should be randomly sampled for the dataset. Leave blank to sample all.'
     )
     parser.add_argument(
@@ -161,6 +177,13 @@ def main():
         type=bool,
         default=True,
         help='Should the statistics be printed?'
+    )
+    parser.add_argument(
+        '--buckets',
+        type=int,
+        default=[50,100,150],
+        nargs='+',
+        help='Each element determines the size of one bucket. So [50] means there wille be one train, val, test bucket containing a total of 50 docs.'
     )
     
     args = parser.parse_args()
@@ -173,6 +196,9 @@ def main():
         tags = [tags[0]+' ',tags[0]+' ']
     else:
         raise ValueError('Number of tags should be 0 or 2')
+    
+    if args.buckets == []:
+        args.buckets = [args.no_docs]
     
     
     # setup spacy
@@ -192,11 +218,14 @@ def main():
     print('Retrieve the zip-file from\n', url)
     filehandle, _ = urllib.request.urlretrieve(url)
     zip_file_object = zipfile.ZipFile(filehandle, 'r')
-    sentence_tuples, doc_count = file_to_sentence_list(nlp,zip_file_object,args.mask_percentage, args.no_docs, args.shuffle)
+    document_sentence_tuples = file_to_sentence_list(nlp,zip_file_object,args.mask_percentage, args.no_docs)
     
-    write_sentences(args.data_dir, sentence_tuples, tags, args)
+    write_sentences(args.data_dir, document_sentence_tuples, tags, args)
+    
+    sentence_tuples_bucket = [sentence_tuple for document in document_sentence_tuples for sentence_tuple in document]
     if args.print_statisitics:
-        words_per_sentence = [len(sentence.split()) for _, sentence in sentence_tuples]
+        print('create statistics')
+        words_per_sentence = [len(sentence.split( )) for _, sentence in sentence_tuples_bucket]
         maximum = max(words_per_sentence)
         words_per_sentence_median = median(words_per_sentence)
         percentile_90 = np.percentile(words_per_sentence, 90)
@@ -215,7 +244,7 @@ def main():
         plt.text(percentile_99,100,'99%: '+str(int(percentile_99)),horizontalalignment='right',rotation=90.)
         plt.text(maximum,100,'max: '+str(int(maximum)),horizontalalignment='right',rotation=90.)
         plt.xlabel('Number of Words ('+str(sum(words_per_sentence))+' in total)')
-        plt.ylabel('Number of Sentences \n('+str(len(sentence_tuples))+' in total, from '+str(doc_count)+' document(s))')
+        plt.ylabel('Number of Sentences \n('+str(len(sentence_tuples_bucket))+' in total, from '+str(len(document_sentence_tuples))+' document(s))')
         plt.savefig('output/words_per_sentence.pdf', bbox_inches = 'tight', format='pdf')
     
 
